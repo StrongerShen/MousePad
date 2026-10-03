@@ -1,4 +1,4 @@
-export const PRICES={maps:{free:5000,rates:[7,5.6,4.2,2.1,.53]},street:{free:5000,rates:[14,11.2,8.4,4.2,1.05]}};
+export const PRICES={maps:{free:5000,rates:[7,5.6,4.2,2.1,.53]},street:{free:5000,rates:[14,11.2,8.4,4.2,1.05]},geocode:{free:10000,rates:[5,4,3,1.5,.38]}};
 export function estimate(count,sku){let total=0,start=PRICES[sku].free;const bounds=[100000,500000,1000000,5000000,Infinity];for(let i=0;i<bounds.length;i++){const n=Math.max(0,Math.min(count,bounds[i])-start);total+=n*PRICES[sku].rates[i]/1000;start=bounds[i];}return total;}
 export function deadzone(value){return Math.abs(value)<.14?0:Math.sign(value)*(Math.abs(value)-.14)/.86;}
 export function createFlight(lat=25.033,lng=121.5654){return {lat,lng,h:0,heading:0,vx:0,vy:0,speed:0,maxSpeedKmh:30,time:0,mode:'grounded',paused:false};}
