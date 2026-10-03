@@ -1,0 +1,70 @@
+import {estimate,deadzone,createFlight,step} from './flight-core.js';
+import {DroneScene,DRONE_STYLES} from './drone-scene.js';
+const $=id=>document.getElementById(id), month=()=>new Date().toISOString().slice(0,7);
+let memory={},storageWarning=false;
+function readUsage(){try{const value=JSON.parse(localStorage.getItem('drone-usage-v1')||'null');return value?.month===month()?value:{month:month(),maps:0,street:0,budget:5};}catch{return memory.month===month()?memory:{month:month(),maps:0,street:0,budget:5};}}
+function saveUsage(value){memory=value;try{localStorage.setItem('drone-usage-v1',JSON.stringify(value));}catch{storageWarning=true;}}
+function increment(sku){const usage=readUsage();usage[sku]+=1;saveUsage(usage);drawUsage();}
+function message(text){$('message').textContent=text;}
+function drawUsage(){const u=readUsage();for(const [sku,label] of [['maps','map'],['street','street']]){$(`${label}-count`).textContent=`${u[sku].toLocaleString()} / 5,000`;$(`${label}-progress`).value=u[sku];}const cost=estimate(u.maps,'maps')+estimate(u.street,'street');$('cost').textContent=`US$${cost.toFixed(2)}`;if(cost>0&&cost>=u.budget)message('已達本機估算費用提醒門檻，請確認 GCP 帳單。');if(storageWarning)message('瀏覽器無法儲存用量，重新開啟後記錄將遺失。');}
+let trainingMode=true,droneStyle='camera',simulationFailed=false;
+let flight=createFlight(),map=null,panorama=null,streetService=null,streetBusy=false,connecting=false,apiLoaded=false;
+let axes={strafe:0,forward:1,yaw:2,lift:3,takeoff:1,street:3},gamepadIndex=null,gamepadId='',previousButtons=[],keys=new Set(),lastFrame=0,lastMap=0;
+let touch={forward:0,strafe:0,yaw:0,lift:0};
+for(const button of document.querySelectorAll('[data-axis]')){
+button.addEventListener('pointerdown',event=>{event.preventDefault();button.setPointerCapture(event.pointerId);touch[button.dataset.axis]=Number(button.dataset.value);});
+for(const event of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(event,()=>{touch[button.dataset.axis]=0;});
+}
+const settings=$('settings');
+function takeoff(){if(simulationFailed){message('畫面更新失敗，請重新整理後再試。');return;}if(flight.mode!=='grounded')return;flight.paused=false;flight.mode='takingOff';if(trainingMode)$('training').focus({preventScroll:true});telemetry();message('正在起飛，約 3 秒後升至 15 公尺；可用搖桿、WASD 或方向按鈕操作。');}
+function land(){if(flight.mode==='grounded')return;flight.paused=false;flight.mode='landing';message('原地自動下降；本模擬器未計算地形碰撞。');}
+function togglePause(){flight.paused=!flight.paused;keys.clear();message(flight.paused?'已暫停；按 P 或「繼續」恢復。':'已恢復操作。');}
+function pauseForSafety(reason){if(flight.mode!=='grounded')flight.paused=true;keys.clear();touch={forward:0,strafe:0,yaw:0,lift:0};message(reason);}
+function toggleFlight(){flight.mode==='grounded'?takeoff():land();}
+$('takeoff').onclick=takeoff;$('land').onclick=land;$('pause').onclick=togglePause;
+function setScene(training){trainingMode=training||!map;$('training').hidden=!trainingMode;$('map').hidden=trainingMode;$('training-label').hidden=!trainingMode;$('map-status').textContent=trainingMode?'3D 訓練場':'Google 3D 地圖';$('training-mode').setAttribute('aria-pressed',String(trainingMode));$('google-mode').setAttribute('aria-pressed',String(!trainingMode));}
+$('training-mode').onclick=()=>setScene(true);$('google-mode').onclick=()=>setScene(false);
+$('drone-style').onchange=()=>{const name=$('drone-style').value;if(!DRONE_STYLES[name])return;droneStyle=name;if(!trainingMode)setScene(true);$('training').focus({preventScroll:true});message(`已切換${DRONE_STYLES[name].label}；樣式不改變飛行性能。`);};
+$('reset-flight').onclick=()=>{flight=createFlight(Number($('latitude').value)||25.033,Number($('longitude').value)||121.5654);scene.reset();simulationFailed=false;keys.clear();touch={forward:0,strafe:0,yaw:0,lift:0};previousButtons=[];setScene(true);telemetry();message('已回到起降區；按「起飛」重新開始。');};
+$('settings-open').onclick=()=>{pauseForSafety('設定期間暫停飛行。');settings.showModal();const u=readUsage();$('baseline-map').value=u.maps;$('baseline-street').value=u.street;$('budget').value=u.budget;};
+$('settings-close').onclick=()=>settings.close();
+$('save-usage').onclick=()=>{const maps=Number($('baseline-map').value),street=Number($('baseline-street').value),budget=Number($('budget').value);if(![maps,street].every(n=>Number.isSafeInteger(n)&&n>=0)||!Number.isFinite(budget)||budget<0){message('用量需為非負整數，提醒門檻需為非負數。');return;}saveUsage({month:month(),maps,street,budget});drawUsage();message('已更新本月用量基準；實際帳單仍以 GCP 為準。');};
+function setControlsOSD(open){
+ $('controls-osd').hidden=!open;
+ $('controls-osd-toggle').setAttribute('aria-expanded',String(open));
+ if(open){pauseForSafety('操作 OSD 已開啟，設定期間暫停飛行。');$('controls-osd-close').focus({preventScroll:true});}
+ else{$('controls-osd-toggle').focus({preventScroll:true});if(flight.paused)message('操作 OSD 已關閉；按 P 或「繼續」恢復飛行。');}
+}
+$('controls-osd-toggle').onclick=()=>setControlsOSD($('controls-osd').hidden);
+$('controls-osd-close').onclick=()=>setControlsOSD(false);
+$('controls').onsubmit=e=>{e.preventDefault();const form=new FormData(e.currentTarget),next={};for(const name of Object.keys(axes)){const n=Number(form.get(name));if(!Number.isInteger(n)||n<0||n>(['takeoff','street'].includes(name)?63:31))return;next[name]=n;}axes=next;previousButtons=[];$('controls-status').textContent='已套用搖桿對應。關閉 OSD 後按 P 或「繼續」恢復。';message('已套用搖桿對應。');};
+function loadApi(key){return new Promise((resolve,reject)=>{if(apiLoaded)return resolve();window.droneMapsReady=()=>{apiLoaded=true;resolve();};window.gm_authFailure=()=>{message('Google 金鑰授權失敗。請確認帳單、API 限制與網站來源限制。');reject(new Error('金鑰授權失敗'));};const script=document.createElement('script');const params=new URLSearchParams({key,v:'weekly',loading:'async',callback:'droneMapsReady',language:'zh-TW'});script.src=`https://maps.googleapis.com/maps/api/js?${params}`;script.onerror=()=>{script.remove();reject(new Error('無法連線到 Google Maps。'));};document.head.append(script);});}
+$('config').onsubmit=async e=>{e.preventDefault();if(connecting)return;const key=$('api-key').value.trim(),lat=Number($('latitude').value),lng=Number($('longitude').value);if(!key||!Number.isFinite(lat)||Math.abs(lat)>85||!Number.isFinite(lng)||Math.abs(lng)>180)return;connecting=true;$('connect').disabled=true;message('正在連接 Google 3D 地圖……');try{await loadApi(key);const {Map3DElement,MapMode}=await google.maps.importLibrary('maps3d');const {StreetViewService}=await google.maps.importLibrary('streetView');if(map){map.remove();}flight=createFlight(lat,lng);map=new Map3DElement({center:{lat,lng,altitude:100},heading:0,tilt:70,range:200,mode:MapMode.HYBRID,defaultUIHidden:true});$('map').append(map);increment('maps');streetService=new StreetViewService();scene.reset();$('google-mode').disabled=false;setScene(false);$('settings-open').textContent='地圖與用量設定';$('api-key').value='';settings.close();message('已連接地圖。高度為相對起點的模擬值，未計算地形碰撞。');}catch(error){message(`無法載入地圖：${error.message}；若要更換金鑰，請重新整理頁面。`);}finally{connecting=false;$('connect').disabled=false;}};
+async function toggleStreet(){const panel=$('street-panel');if(!panel.hidden){panel.hidden=true;$('street-toggle').textContent='開啟街景';$('street-toggle').setAttribute('aria-pressed','false');return;}if(!map||!streetService){message('請先連接 Google 地圖，再開啟街景。');return;}if(streetBusy)return;streetBusy=true;panel.hidden=false;$('street-toggle').textContent='關閉街景';$('street-toggle').setAttribute('aria-pressed','true');$('street-status').textContent='正在尋找附近街景……';try{const result=await streetService.getPanorama({location:{lat:flight.lat,lng:flight.lng},radius:300});if(panel.hidden)return;const {StreetViewPanorama}=await google.maps.importLibrary('streetView');if(!panorama){panorama=new StreetViewPanorama($('street-view'),{pano:result.data.location.pano,pov:{heading:flight.heading,pitch:0},enableCloseButton:false});increment('street');}else{panorama.setPano(result.data.location.pano);panorama.setPov({heading:flight.heading,pitch:0});panorama.setVisible(true);}$('street-status').textContent='顯示開啟時附近的地面全景，飛行時不會持續跟隨；關閉後可重新選取位置。';}catch{$('street-status').textContent='附近 300 公尺內找不到街景，或街景服務無法使用。';}finally{streetBusy=false;}}
+$('street-toggle').onclick=toggleStreet;$('street-close').onclick=()=>{if(!$('street-panel').hidden)toggleStreet();};
+window.addEventListener('keydown',e=>{if(!$('controls-osd').hidden){if(e.code==='Escape'){e.preventDefault();setControlsOSD(false);}return;}if(settings.open||['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)||e.target.isContentEditable)return;if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();keys.add(e.code);if(e.repeat)return;if(e.code==='Space')toggleFlight();if(e.code==='KeyV')toggleStreet();if(e.code==='KeyP')togglePause();});
+window.addEventListener('keyup',e=>keys.delete(e.code));window.addEventListener('blur',()=>pauseForSafety('頁面失去焦點，飛行已暫停；點回頁面後按「繼續」。'));
+document.addEventListener('visibilitychange',()=>{if(document.hidden)pauseForSafety('頁面已隱藏，飛行已暫停。');});
+function getInput(){const input={forward:0,strafe:0,lift:0,yaw:0};if(settings.open||!$('controls-osd').hidden||document.hidden)return input;let pads=[],padError='';try{if(!navigator.getGamepads)padError='瀏覽器不支援搖桿，請使用鍵盤';else pads=navigator.getGamepads();}catch{padError='瀏覽器禁止搖桿存取，請直接開啟網站網址或使用鍵盤';}const current=pads[gamepadIndex];if(gamepadIndex!==null&&(!current?.connected||current.id!==gamepadId)){gamepadIndex=null;gamepadId='';previousButtons=[];pauseForSafety('搖桿已中斷，飛行已暫停。');}if(gamepadIndex===null){const pad=Array.from(pads).find(p=>p?.connected);if(pad){gamepadIndex=pad.index;gamepadId=pad.id;previousButtons=pad.buttons.map(b=>b.pressed);}}
+const pad=pads[gamepadIndex];if(pad?.connected){$('gamepad-status').textContent=`搖桿：${pad.id}`;input.forward=-deadzone(pad.axes[axes.forward]||0);input.strafe=deadzone(pad.axes[axes.strafe]||0);input.yaw=deadzone(pad.axes[axes.yaw]||0);input.lift=-deadzone(pad.axes[axes.lift]||0);if(pad.buttons[axes.takeoff]?.pressed&&!previousButtons[axes.takeoff])toggleFlight();if(pad.buttons[axes.street]?.pressed&&!previousButtons[axes.street])toggleStreet();previousButtons=pad.buttons.map(b=>b.pressed);}else{$('gamepad-status').textContent=padError||'鍵盤操作 · 按搖桿任一鍵連線';}input.forward+=Number(keys.has('KeyW'))-Number(keys.has('KeyS'));input.strafe+=Number(keys.has('KeyD'))-Number(keys.has('KeyA'));input.lift+=Number(keys.has('ArrowUp'))-Number(keys.has('ArrowDown'));input.yaw+=Number(keys.has('ArrowRight'))-Number(keys.has('ArrowLeft'));for(const name of Object.keys(input))input[name]=Math.max(-1,Math.min(1,input[name]+touch[name]));return input;}
+function telemetry(){const names={grounded:'已降落',takingOff:'起飛中',flying:'飛行中',landing:'降落中'};$('flight-state').textContent=flight.paused?'已暫停':names[flight.mode];$('altitude').innerHTML=`${flight.h.toFixed(1)}<small> m</small>`;$('speed').innerHTML=`${flight.speed.toFixed(1)}<small> m/s</small>`;$('heading').textContent=`${Math.round(flight.heading).toString().padStart(3,'0')}°`;const sec=Math.floor(flight.time);$('duration').textContent=`${Math.floor(sec/60).toString().padStart(2,'0')}:${(sec%60).toString().padStart(2,'0')}`;$('takeoff').disabled=flight.mode!=='grounded';$('land').disabled=flight.mode==='grounded';$('pause').textContent=flight.paused?'繼續':'暫停';$('pause').setAttribute('aria-pressed',String(flight.paused));}
+const scene=new DroneScene($('training'));
+let renderWarning=false;
+function frame(now){
+ try{
+  const dt=lastFrame?Math.min(.1,(now-lastFrame)/1000):0;lastFrame=now;
+  step(flight,getInput(),dt);
+  if(map&&!trainingMode&&now-lastMap>50){
+   try{map.cameraPosition={lat:flight.lat,lng:flight.lng,altitude:100+flight.h};map.heading=flight.heading;map.tilt=85;}
+   catch{setScene(true);message('Google 視角更新失敗，已切回 3D 訓練場，飛行可繼續。');}
+   lastMap=now;
+  }
+  telemetry();if(trainingMode)scene.render(flight,droneStyle);
+ }catch(error){
+  simulationFailed=true;flight.paused=true;
+  if(!renderWarning){renderWarning=true;message('飛行更新發生錯誤，請按「重新開始」或重新整理頁面。');console.error(error);}
+ }finally{requestAnimationFrame(frame);}
+}
+setScene(true);
+window.addEventListener('storage',drawUsage);setInterval(drawUsage,30000);drawUsage();requestAnimationFrame(frame);
+const context=document.modelContext;if(context?.registerTool){const life=new AbortController();window.addEventListener('pagehide',()=>life.abort(),{once:true});for(const tool of [{name:'read_flight_status',title:'讀取飛行狀態',description:'讀取目前飛行狀態及本機估算用量。',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true},execute:()=>({flight:{...flight},usage:readUsage(),estimatedUsd:estimate(readUsage().maps,'maps')+estimate(readUsage().street,'street')})},{name:'set_flight_action',title:'操作模擬飛行',description:'起飛、原地降落或暫停模擬飛行。',inputSchema:{type:'object',properties:{action:{type:'string',enum:['takeoff','land','pause']}},required:['action'],additionalProperties:false},annotations:{readOnlyHint:false},execute:input=>{if(!input||!['takeoff','land','pause'].includes(input.action))throw new Error('無效的飛行動作');if(input.action==='takeoff')takeoff();if(input.action==='land')land();if(input.action==='pause')pauseForSafety('已暫停。');telemetry();return {...flight};}}]){try{Promise.resolve(context.registerTool(tool,{signal:life.signal})).catch(()=>{});}catch{}}}

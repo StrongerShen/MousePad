@@ -1,0 +1,29 @@
+# Python runtime files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+service-account*.json
+secrets*.json
+.aws/
+.codex/
+.agents/
+
+# Hosting metadata and local runtime state
+.openai/
+.sites-runtime/
+node_modules/
+*.log
+.DS_Store
+
+# drone-site/dist contains authored static source; keep it tracked.

@@ -1,0 +1,4 @@
+# Allow only the dedicated mousepad group to create virtual input devices.
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="mousepad", MODE="0660"
+# Allow the service to read joystick devices, including devices plugged in later.
+KERNEL=="js[0-9]*", SUBSYSTEM=="input", GROUP="input", MODE="0660"
