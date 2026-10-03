@@ -6,7 +6,8 @@
 
 ## Project Structure & Module Organization
 
-- `mousepad.py` contains the CLI, joystick event reader, `MousePadController`, and background cursor movement loop. It reads `/dev/input/js*` and emits mouse and keyboard events through `/dev/uinput`.
+- `mousepad.py` contains the CLI, Linux joystick event reader, `MousePadController`, and background cursor movement loop. On Linux it reads `/dev/input/js*` and emits events through `/dev/uinput`.
+- `macos_hid.py` reads joystick axes, buttons, and hats through macOS IOKit. `macos_backend.py` emits CoreGraphics mouse and keyboard events. Keep the controller mapping shared with Linux.
 - `mousepad.service` defines the system-level systemd service, running as a regular user. `70-mousepad.rules` and `mousepad.modules.conf` configure device access and module loading.
 - `README.md` documents dependencies, controller mappings, and usage in Traditional Chinese.
 - `drone-site/dist/` contains the authored static drone simulator; `drone-site/README.md` documents Google Maps setup, controls, OSD, and deployment.
@@ -15,7 +16,7 @@
 
 ## Build, Test, and Development Commands
 
-Run commands from the repository root. Python 3, an X11 or Wayland desktop, a readable joystick device, and write access to `/dev/uinput` are required for interactive use.
+Run commands from the repository root. Linux interactive use requires Python 3, an X11 or Wayland desktop, a readable joystick device, and write access to `/dev/uinput`. macOS interactive use requires a logged-in desktop, a joystick, and Accessibility permission.
 
 - `sudo apt install python3`: install runtime dependencies on Debian/Ubuntu.
 - `python3 mousepad.py --help`: inspect available CLI options.
@@ -23,6 +24,7 @@ Run commands from the repository root. Python 3, an X11 or Wayland desktop, a re
 - `python3 mousepad.py -d /dev/input/js0 -s 18 -z 7000`: run with an explicit device, cursor speed, and deadzone.
 - `python3 -m py_compile mousepad.py`: check Python syntax; no build step is required.
 - `python3 -m unittest discover -s tests -v`: run mocked controller and cleanup tests.
+- `python3 mousepad.py --list`: list macOS joystick indices through IOKit HID.
 - `systemctl status mousepad`: inspect an installed service.
 
 ## Coding Style & Naming Conventions

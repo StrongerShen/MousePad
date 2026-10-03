@@ -1,10 +1,10 @@
 # MousePad 🎮 ➔ 🖱️
 
-MousePad 將 Linux USB 搖桿轉換成桌面滑鼠與鍵盤操作，支援 X11 與 Wayland。使用 Linux `uinput` 建立虛擬輸入裝置，不需要 `xdotool`，也不依賴 `DISPLAY`。
+MousePad 將 USB／藍牙搖桿轉換成桌面滑鼠與鍵盤操作，支援 Linux（X11／Wayland）與 macOS。Linux 使用 `uinput` 建立虛擬輸入裝置；macOS 使用 IOKit HID 讀取搖桿及 CoreGraphics 發送桌面事件。
 
 ## 安裝需求與權限
 
-需要 Python 3、Linux `uinput`、可讀取的 `/dev/input/js*`，以及可寫入的 `/dev/uinput`。Python 程式只使用標準函式庫。
+Linux 需要 Python 3、`uinput`、可讀取的 `/dev/input/js*`，以及可寫入的 `/dev/uinput`。Python 程式只使用標準函式庫。
 
 ```bash
 sudo apt install python3
@@ -27,6 +27,25 @@ sudo udevadm trigger --subsystem-match=input --sysname-match='js*'
 
 手動執行需登出再登入，才能取得新群組；下方系統服務透過 `SupplementaryGroups` 直接取得所需群組，不必等重新登入。`mousepad` 群組可以送出桌面輸入，`input` 群組可以讀取輸入裝置；僅授權需要此功能的帳號，不要將 `/dev/uinput` 設成所有人可寫。
 
+### macOS 安裝與權限
+
+需要 Python 3、已連接的搖桿，以及執行程式的終端機具備「輔助使用」權限。程式透過 Python 標準函式庫 `ctypes` 呼叫 macOS 內建的 IOKit、CoreGraphics 與 ApplicationServices；無須安裝 Python 套件或 SDL3。既有的 Python 3 可直接重用。
+
+```bash
+python3 mousepad.py --list
+python3 mousepad.py --wait
+```
+
+若尚未安裝 Python 3，可透過 Homebrew 安裝：`brew install python`。Homebrew 在 Apple Silicon 通常安裝至 `/opt/homebrew/bin/python3`，Intel Mac 通常為 `/usr/local/bin/python3`；可用 `command -v python3` 確認實際路徑。這個專案的 macOS 程式碼仍位於目前的專案目錄，不會建立系統服務或複製檔案到 `/Library`。
+
+第一次有搖桿時若顯示權限錯誤，程式會要求 macOS 開啟「輔助使用」設定。允許實際執行 `python3` 的終端機（如 Terminal、iTerm 或 VS Code）；若未出現提示，請至「系統設定 → 隱私權與安全性 → 輔助使用」手動加入並啟用該終端機。重新啟動終端機後再執行。若 IOKit 顯示無法讀取搖桿，也請檢查同處的「輸入監控」權限。這些權限讓 MousePad 讀取控制器並操作桌面，請只授予信任的程式。macOS 必須在已登入的圖形桌面中執行；沒有實作登入畫面或開機前操作。
+
+macOS 的 `--list` 顯示搖桿索引與名稱；`-d 0` 可選擇索引 0。插拔後索引可能改變，請重新執行 `--list`。`--wait` 會等待搖桿，斷線後釋放按住的滑鼠鍵並重新偵測。預設按鍵與軸對應仍以 Logitech Dual Action／RumblePad 2 為準；其他控制器可能有不同索引。偵測到十字鍵 hat 時會使用 hat 取代軸 4／5 作為十字鍵。
+
+若按鍵或搖桿方向不符，可在互動式終端機執行 `python3 mousepad.py --diagnose -d 0`，操作控制器並觀察軸與按鈕編號。診斷數值會在同一畫面更新，不會一直捲動終端機；此模式不會操作桌面，也不需要「輔助使用」權限。按 `Ctrl+C` 結束並返回原本的終端機畫面。
+
+停止時按 `Ctrl+C`。移除 macOS 版本只需停止程序並刪除這份專案；如不再需要相關權限，可在「輔助使用」與「輸入監控」移除先前授予的終端機權限。若 Python 3 是專為此專案安裝且不供其他軟體使用，可另行移除該安裝。
+
 ## 執行與參數
 
 在專案根目錄執行：
@@ -38,7 +57,7 @@ python3 mousepad.py --wait
 python3 mousepad.py -d /dev/input/js0 -s 18 -z 7000
 ```
 
-未指定裝置時，選擇排序後的第一個 `/dev/input/js*`；多個搖桿請使用 `--device`。裝置編號可能隨插拔變動，也可指定 `/dev/input/by-id/` 下指向 joystick 的固定路徑。
+Linux 未指定裝置時，選擇排序後的第一個 `/dev/input/js*`；多個搖桿請使用 `--device`。裝置編號可能隨插拔變動，也可指定 `/dev/input/by-id/` 下指向 joystick 的固定路徑。macOS 則使用 `--list` 顯示的數字索引。
 
 - `--speed`：最大速度，以每 15 毫秒的游標位移量表示；預設 `18`，必須是大於零的有限數值。
 - `--deadzone`：忽略中央漂移的範圍；預設 `7000`，有效範圍 `0–32766`。
@@ -108,11 +127,13 @@ python3 -m unittest discover -s tests -v
 
 測試使用 `unittest` 與模擬輸出，不會產生桌面輸入。涵蓋小數位移、游標與捲動計時、十字鍵狀態、按鍵對應、參數檢查、裝置斷線、重新偵測、裝置選擇及清理流程。
 
-實機測試前停止既有服務，確認游標、捲動、點擊、拖曳、快捷鍵、拔除與重新啟動。請記錄控制器型號、裝置路徑與桌面環境。macOS 與 Windows 尚未實作。
+實機測試前停止既有服務，確認游標、捲動、點擊、拖曳、快捷鍵、拔除與重新啟動。請記錄控制器型號、裝置路徑／索引與桌面環境。Windows 尚未實作。
 
 ## 無人機模擬器
 
 `drone-site/dist/` 是無人機 Web 模擬器的靜態原始碼，支援 3D 訓練場、Google 3D 地圖、街景、搖桿操作與配額／費用估算 OSD。
+
+Logitech RumblePad 2 在此網頁的 Gamepad API 索引與實體標號不同：按鈕索引 `0→實體2`、`1→實體3`、`2→實體1`、`3→實體4`、`4–9→實體5–10`。因此預設以索引 `1` 起飛／降落、索引 `3` 開啟街景；索引 `8/9`（實體按鈕 `9/10`）每按一次將速度上限增加／減少 `5 km/h`，範圍為 `0–120 km/h`。十字鍵索引 `12/13/14/15` 分別為上／下／左／右，控制上升／下降／左轉／右轉。操作 OSD 會即時顯示瀏覽器回報的軸值與按鈕索引；飛行儀表顯示實際速度與速度上限。
 
 - 目前測試網址：[Drone 地景飛行模擬器](https://drone-flight-osd.strongershen.chatgpt.site)（私人網站）。
 - 預計正式網址：`https://mit.com.tw/drone-emu/`（尚未部署）。
