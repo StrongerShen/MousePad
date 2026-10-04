@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""將 Linux 搖桿輸入轉換成 uinput 滑鼠與鍵盤事件。"""
+"""跨平台搖桿滑鼠與鍵盤。"""
 
 import argparse
 import errno
-import fcntl
 import glob
 import math
 import os
@@ -13,6 +12,9 @@ import socket
 import struct
 import sys
 import time
+
+if sys.platform != 'win32':
+    import fcntl
 
 EVENT_FORMAT = '=IhBB'
 EVENT_SIZE = struct.calcsize(EVENT_FORMAT)
@@ -262,16 +264,28 @@ def stop(signum, frame):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='MousePad：搖桿滑鼠（Linux／macOS）')
-    parser.add_argument('-d', '--device', help='Linux：搖桿路徑；macOS：--list 顯示的索引')
+    parser = argparse.ArgumentParser(description='MousePad：搖桿滑鼠（Linux／macOS／Windows）')
+    parser.add_argument('-d', '--device', help='Linux：搖桿路徑；macOS／Windows：--list 顯示的索引')
     parser.add_argument('-s', '--speed', type=positive_speed, default=18.0,
                         help='最大游標速度，每 15 毫秒的位移量（預設 18）')
     parser.add_argument('-z', '--deadzone', type=valid_deadzone, default=7000,
                         help='搖桿死區（預設 7000）')
     parser.add_argument('-l', '--list', action='store_true', help='列出搖桿')
-    parser.add_argument('--diagnose', action='store_true', help='macOS：顯示搖桿軸與按鈕的即時變化，不操作桌面')
+    parser.add_argument('--diagnose', action='store_true', help='macOS／Windows：顯示搖桿即時變化，不操作桌面')
     parser.add_argument('--wait', action='store_true', help='等待搖桿並在斷線後自動重新連線')
     args = parser.parse_args()
+    if sys.platform == 'win32':
+        if args.device is not None and not args.device.isdecimal():
+            parser.error('Windows 的 --device 必須是 --list 顯示的非負整數索引')
+        from windows_backend import run_windows
+        try:
+            return run_windows(args, MousePadController, TICK)
+        except KeyboardInterrupt:
+            print('\nMousePad 已停止。')
+            return 0
+        except (OSError, RuntimeError) as error:
+            print(f'MousePad 錯誤：{error}', file=sys.stderr)
+            return 1
     if sys.platform == 'darwin':
         if args.device is not None and (not args.device.isdecimal() or int(args.device) < 0):
             parser.error('macOS 的 --device 必須是 --list 顯示的非負整數索引')
@@ -285,9 +299,9 @@ def main():
             print(f'MousePad 錯誤：{error}', file=sys.stderr)
             return 1
     if not sys.platform.startswith('linux'):
-        parser.error('目前僅支援 Linux 與 macOS')
+        parser.error('目前僅支援 Linux、macOS 與 Windows')
     if args.diagnose:
-        parser.error('--diagnose 目前僅支援 macOS')
+        parser.error('--diagnose 目前僅支援 macOS 與 Windows')
     devices = sorted(glob.glob('/dev/input/js*'))
     if args.list:
         for path in devices:

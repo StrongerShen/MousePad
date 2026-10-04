@@ -1,6 +1,6 @@
 # MousePad 🎮 ➔ 🖱️
 
-MousePad 將 USB／藍牙搖桿轉換成桌面滑鼠與鍵盤操作，支援 Linux（X11／Wayland）與 macOS。Linux 使用 `uinput` 建立虛擬輸入裝置；macOS 使用 IOKit HID 讀取搖桿及 CoreGraphics 發送桌面事件。
+MousePad 將 USB／藍牙搖桿轉換成桌面滑鼠與鍵盤操作，支援 Linux（X11／Wayland）、macOS 與 Windows。Linux 使用 `uinput`；macOS 使用 IOKit HID 與 CoreGraphics；Windows 使用 WinMM 讀取搖桿及 `SendInput` 發送桌面事件。
 
 ## 安裝需求與權限
 
@@ -46,6 +46,33 @@ macOS 的 `--list` 顯示搖桿索引與名稱；`-d 0` 可選擇索引 0。插�
 
 停止時按 `Ctrl+C`。移除 macOS 版本只需停止程序並刪除這份專案；如不再需要相關權限，可在「輔助使用」與「輸入監控」移除先前授予的終端機權限。若 Python 3 是專為此專案安裝且不供其他軟體使用，可另行移除該安裝。
 
+### Windows 執行
+
+需要 Windows Python 3 與已登入的桌面，無須安裝 Python 套件。在 PowerShell 執行：
+
+```powershell
+cd C:\Projects\MousePad
+py -3 mousepad.py --list
+py -3 mousepad.py --diagnose -d 0
+py -3 mousepad.py -d 0 --wait
+```
+
+`--list` 顯示 WinMM 搖桿索引、軸數、按鈕數與方向帽能力；`--diagnose` 在同一畫面更新軸值、實體按鈕標號（從 1 開始）與 POV，不會持續捲動，也不操作桌面。需要互動式 Windows 終端機；按 `Ctrl+C` 結束並還原原本的終端機畫面。一般模式沿用下方 Logitech 映射：X／Y 控制游標，R 軸控制捲動，POV 控制十字鍵。其他控制器請先診斷確認映射；僅列出 Windows WinMM 驅動程式可讀取的裝置，沒有另外實作 XInput。
+
+啟動時已按住的按鈕會等到放開再接受下一次按下。斷線、停止或發生錯誤時會嘗試釋放已按住的按鍵；`--wait` 會自動重新偵測。索引可能隨插拔變動。程式以 Windows 命名 mutex 防止同一登入工作階段重複啟動。
+
+一般權限可操作一般權限的應用程式；Windows `SendInput` 不能跨越較高的權限層級，因此以系統管理員執行的應用程式需要相同權限的 MousePad。未實作開機服務、登入畫面或 UAC 安全桌面操作。
+
+WSL 可以開發同一份 `C:\Projects\MousePad`（WSL 路徑 `/mnt/c/Projects/MousePad`），但 Windows 版本必須由 Windows Python 執行：
+
+```bash
+cd /mnt/c/Projects/MousePad
+py.exe -3 'C:\Projects\MousePad\mousepad.py' --list
+py.exe -3 'C:\Projects\MousePad\mousepad.py' -d 0 --wait
+```
+
+使用 WSL 的 `python3` 會啟動 Linux 版本。無須 USB passthrough，也不需要同步兩份專案。
+
 ## 執行與參數
 
 在專案根目錄執行：
@@ -57,10 +84,11 @@ python3 mousepad.py --wait
 python3 mousepad.py -d /dev/input/js0 -s 18 -z 7000
 ```
 
-Linux 未指定裝置時，選擇排序後的第一個 `/dev/input/js*`；多個搖桿請使用 `--device`。裝置編號可能隨插拔變動，也可指定 `/dev/input/by-id/` 下指向 joystick 的固定路徑。macOS 則使用 `--list` 顯示的數字索引。
+Linux 未指定裝置時，選擇排序後的第一個 `/dev/input/js*`；多個搖桿請使用 `--device`。裝置編號可能隨插拔變動，也可指定 `/dev/input/by-id/` 下指向 joystick 的固定路徑。macOS 與 Windows 則使用 `--list` 顯示的數字索引。
 
 - `--speed`：最大速度，以每 15 毫秒的游標位移量表示；預設 `18`，必須是大於零的有限數值。
 - `--deadzone`：忽略中央漂移的範圍；預設 `7000`，有效範圍 `0–32766`。
+- `--diagnose`：macOS／Windows 的互動式診斷畫面，原地更新搖桿狀態，不操作桌面；Linux 目前未提供此 CLI 選項。
 - `--wait`：沒有搖桿時等待；拔除後清理輸出，再偵測可用的搖桿。
 - `Ctrl+C` 或 `SIGTERM`：停止並釋放已按下的滑鼠鍵。
 
@@ -127,7 +155,9 @@ python3 -m unittest discover -s tests -v
 
 測試使用 `unittest` 與模擬輸出，不會產生桌面輸入。涵蓋小數位移、游標與捲動計時、十字鍵狀態、按鍵對應、參數檢查、裝置斷線、重新偵測、裝置選擇及清理流程。
 
-實機測試前停止既有服務，確認游標、捲動、點擊、拖曳、快捷鍵、拔除與重新啟動。請記錄控制器型號、裝置路徑／索引與桌面環境。Windows 尚未實作。
+實機測試前停止既有服務，確認游標、捲動、點擊、拖曳、快捷鍵、拔除與重新啟動。請記錄控制器型號、裝置路徑／索引與桌面環境。Windows 可用 `py -3 -m unittest discover -s tests -p test_windows_backend.py -v` 執行後端模擬測試。
+
+2026-10-04 驗證：Windows 偵測到 HID `VID_046D&PID_C218`，WinMM 索引 `0`，4 軸、12 按鈕及 POV；裝置列舉與診斷讀取成功。WSL 全部 35 項模擬測試與 Windows 後端 11 項模擬測試通過。診斷畫面的原地更新與中斷還原已通過模擬測試；實際游標、捲動、按鈕映射、拔插重連及終端機畫面仍需手動驗證。
 
 ## 無人機模擬器
 
